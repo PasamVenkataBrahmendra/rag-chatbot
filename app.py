@@ -1,24 +1,10 @@
 import streamlit as st
 from rag_pipeline import RAGChatbot
+from pdf_handler import extract_text_from_pdf, build_pdf_index, retrieve_from_pdf
 
 st.set_page_config(page_title="RAG Chatbot", page_icon="🤖", layout="centered")
 
-st.markdown("""
-    <style>
-    .followup-btn {
-        background-color: #f0f2f6;
-        border: 1px solid #d0d3da;
-        border-radius: 8px;
-        padding: 6px 12px;
-        margin: 4px;
-        cursor: pointer;
-        font-size: 13px;
-    }
-    </style>
-""", unsafe_allow_html=True)
-
 st.title("🤖 RAG Chatbot")
-st.markdown("Ask me anything — I search Wikipedia and answer like ChatGPT.")
 
 @st.cache_resource
 def load_bot():
@@ -28,12 +14,85 @@ bot = load_bot()
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
-
 if "followups" not in st.session_state:
     st.session_state.followups = []
-
 if "source" not in st.session_state:
     st.session_state.source = ""
+if "pdf_index" not in st.session_state:
+    st.session_state.pdf_index = None
+if "pdf_chunks" not in st.session_state:
+    st.session_state.pdf_chunks = []
+if "pdf_name" not in st.session_state:
+    st.session_state.pdf_name = ""
+if "mode" not in st.session_state:
+    st.session_state.mode = "wikipedia"
+
+# Sidebar
+with st.sidebar:
+    st.markdown("## 🤖 RAG Chatbot")
+    st.markdown("---")
+
+    # Mode selector
+    st.markdown("### Mode")
+    mode = st.radio(
+        "Choose what to chat with:",
+        ["🌐 Wikipedia (any question)", "📄 My PDF document"],
+        index=0
+    )
+
+    if "Wikipedia" in mode:
+        st.session_state.mode = "wikipedia"
+        st.markdown("---")
+        st.markdown("✅ Ask any question")
+        st.markdown("✅ Searches Wikipedia live")
+
+    else:
+        st.session_state.mode = "pdf"
+        st.markdown("---")
+        st.markdown("### Upload PDF")
+        uploaded_file = st.file_uploader(
+            "Choose a PDF file",
+            type="pdf",
+            help="Upload any PDF and ask questions about it"
+        )
+
+        if uploaded_file:
+            if uploaded_file.name != st.session_state.pdf_name:
+                with st.spinner("Reading PDF..."):
+                    text = extract_text_from_pdf(uploaded_file)
+                    index, chunks = build_pdf_index(text, bot.embed_model)
+                    st.session_state.pdf_index = index
+                    st.session_state.pdf_chunks = chunks
+                    st.session_state.pdf_name = uploaded_file.name
+                    st.session_state.messages = []
+                    st.session_state.followups = []
+                    bot.clear_history()
+                st.success(f"✅ {uploaded_file.name} loaded! ({len(chunks)} chunks)")
+
+    st.markdown("---")
+    st.markdown("### Features")
+    st.markdown("✅ Answers any question")
+    st.markdown("✅ Chat with your PDF")
+    st.markdown("✅ Remembers conversation")
+    st.markdown("✅ Streams word by word")
+    st.markdown("✅ Suggests follow ups")
+    st.markdown("---")
+
+    if st.button("🗑️ Clear Chat", use_container_width=True):
+        st.session_state.messages = []
+        st.session_state.followups = []
+        st.session_state.source = ""
+        bot.clear_history()
+        st.rerun()
+
+# Main chat area
+if st.session_state.mode == "pdf" and not st.session_state.pdf_index:
+    st.info("📄 Upload a PDF from the sidebar to start chatting with it.")
+else:
+    if st.session_state.mode == "wikipedia":
+        st.markdown("Ask me anything — I search Wikipedia and answer like ChatGPT.")
+    else:
+        st.markdown(f"Chatting with **{st.session_state.pdf_name}** — ask anything about it.")
 
 # Display chat history
 for msg in st.session_state.messages:
@@ -53,57 +112,86 @@ if st.session_state.followups:
 if st.session_state.source:
     st.caption(f"📚 Source: {st.session_state.source}")
 
-# Handle prefilled follow up question click
+# Handle prefilled follow up question
 prefill = st.session_state.pop("prefill_question", None)
 
 # Chat input
 prompt = st.chat_input("Ask anything...") or prefill
 
 if prompt:
-    # Show user message
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
+    if st.session_state.mode == "pdf" and not st.session_state.pdf_index:
+        st.warning("Please upload a PDF first from the sidebar.")
+    else:
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
 
-    # Stream assistant response
-    with st.chat_message("assistant"):
-        response_placeholder = st.empty()
-        full_response = ""
-        source = ""
-        followups = []
+        with st.chat_message("assistant"):
+            response_placeholder = st.empty()
+            full_response = ""
+            source = ""
+            followups = []
 
-        for delta, src, fups in bot.answer_stream(prompt):
-            if delta:
-                full_response += delta
-                response_placeholder.markdown(full_response + "▌")
-            if src:
-                source = src
-            if fups:
-                followups = fups
+            if st.session_state.mode == "pdf":
+                # PDF mode — retrieve from PDF and answer
+                relevant_chunks = retrieve_from_pdf(
+                    prompt,
+                    st.session_state.pdf_index,
+                    st.session_state.pdf_chunks,
+                    bot.embed_model
+                )
+                context = "\n\n".join(relevant_chunks)
 
-        response_placeholder.markdown(full_response)
+                system_prompt = """You are a helpful assistant.
+Answer questions based on the document provided.
+Be direct, clear and concise.
+Never say 'the context does not mention'.
+If the answer is not in the document say 'I could not find that in the uploaded document.'"""
 
-    # Save to session
-    st.session_state.messages.append({"role": "assistant", "content": full_response})
-    st.session_state.followups = followups
-    st.session_state.source = source
-    st.rerun()
+                user_prompt = f"""Document content:
+{context}
 
-# Sidebar
-with st.sidebar:
-    st.markdown("## 🤖 RAG Chatbot")
-    st.markdown("Powered by **Llama 3** + **Wikipedia** + **FAISS**")
-    st.markdown("---")
-    st.markdown("### Features")
-    st.markdown("✅ Answers any question")
-    st.markdown("✅ Remembers conversation")
-    st.markdown("✅ Streams word by word")
-    st.markdown("✅ Suggests follow ups")
-    st.markdown("✅ Shows sources")
-    st.markdown("---")
-    if st.button("🗑️ Clear Chat", use_container_width=True):
-        st.session_state.messages = []
-        st.session_state.followups = []
-        st.session_state.source = ""
-        bot.clear_history()
+Question: {prompt}"""
+
+                bot.chat_history.append({"role": "user", "content": prompt})
+
+                messages = [{"role": "system", "content": system_prompt}]
+                if len(bot.chat_history) > 1:
+                    messages += bot.chat_history[:-1]
+                messages.append({"role": "user", "content": user_prompt})
+
+                stream = bot.groq.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=messages,
+                    temperature=0.2,
+                    max_tokens=512,
+                    stream=True
+                )
+
+                for chunk in stream:
+                    delta = chunk.choices[0].delta.content or ""
+                    full_response += delta
+                    response_placeholder.markdown(full_response + "▌")
+
+                response_placeholder.markdown(full_response)
+                bot.chat_history.append({"role": "assistant", "content": full_response})
+                followups = bot.get_followup_questions(prompt, full_response)
+                source = f"📄 {st.session_state.pdf_name}"
+
+            else:
+                # Wikipedia mode
+                for delta, src, fups in bot.answer_stream(prompt):
+                    if delta:
+                        full_response += delta
+                        response_placeholder.markdown(full_response + "▌")
+                    if src:
+                        source = src
+                    if fups:
+                        followups = fups
+
+                response_placeholder.markdown(full_response)
+
+        st.session_state.messages.append({"role": "assistant", "content": full_response})
+        st.session_state.followups = followups
+        st.session_state.source = source
         st.rerun()
