@@ -9,46 +9,45 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 load_dotenv()
 
+GREETINGS = [
+    "hi", "hello", "hey", "good morning", "good evening",
+    "good afternoon", "howdy", "what's up", "sup", "greetings",
+    "hiya", "yo", "namaste", "helo", "hii", "hiii"
+]
+
 class RAGChatbot:
     def __init__(self):
         print("Loading embedding model...")
         self.embed_model = SentenceTransformer("all-MiniLM-L6-v2")
-
         print("Connecting to Groq...")
         api_key = os.getenv("GROQ_API_KEY")
         if not api_key:
-            raise ValueError("GROQ_API_KEY not found in .env file!")
+            raise ValueError("GROQ_API_KEY not found!")
         self.groq = Groq(api_key=api_key)
-
         self.wiki = wikipediaapi.Wikipedia(
             language="en",
             user_agent="rag-chatbot/1.0"
         )
-
         self.splitter = RecursiveCharacterTextSplitter(
             chunk_size=500,
             chunk_overlap=50
         )
-
-        # Chat memory — stores full conversation
         self.chat_history = []
-
         print("Ready!\n")
 
+    def is_greeting(self, text):
+        return text.lower().strip().rstrip("!.,?") in GREETINGS
+
     def search_wikipedia(self, query):
-        print(f"Searching Wikipedia for: {query}")
         page = self.wiki.page(query)
         if page.exists():
             return page.text, page.title
-
         words = query.split()
         for i in range(len(words), 0, -1):
             shorter = " ".join(words[:i])
             page = self.wiki.page(shorter)
             if page.exists():
-                print(f"Found page: {shorter}")
                 return page.text, page.title
-
         return None, None
 
     def build_dynamic_index(self, text):
@@ -70,15 +69,32 @@ class RAGChatbot:
                 results.append(chunks[idx])
         return results
 
+    def get_confidence(self, query, answer, context):
+        prompt = f"""Rate confidence that this answer is correct (0-100). Return ONLY the number.
+Question: {query}
+Answer: {answer}
+Context: {context[:300]}
+Score:"""
+        try:
+            response = self.groq.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                max_tokens=5
+            )
+            score = int(response.choices[0].message.content.strip().replace("%", ""))
+            return min(max(score, 0), 100)
+        except:
+            return 85
+
     def get_followup_questions(self, query, answer):
-        prompt = f"""Based on this question and answer, suggest exactly 3 short follow up questions the user might want to ask next.
-Return ONLY the 3 questions, one per line, no numbering, no extra text.
+        prompt = f"""Suggest exactly 3 short follow up questions based on this Q&A.
+Return ONLY 3 questions, one per line, no numbering.
 
 Question: {query}
 Answer: {answer}
 
 3 follow up questions:"""
-
         response = self.groq.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": prompt}],
@@ -89,71 +105,42 @@ Answer: {answer}
         questions = [q.strip() for q in raw.split("\n") if q.strip()]
         return questions[:3]
 
-    def answer_stream(self, query):
-        # Step 1: Add user message to history
-        self.chat_history.append({"role": "user", "content": query})
-
-        # Step 2: Search Wikipedia
-        wiki_text, wiki_title = self.search_wikipedia(query)
-
-        system_prompt = """You are a helpful assistant like ChatGPT.
-Answer questions directly, clearly and confidently.
-Format your answers nicely using bullet points or numbered lists when appropriate.
-Never say 'based on general knowledge' or 'the context does not mention'.
-Never reference any context or documents in your answer.
-Keep answers concise but complete."""
-
+    def summarize_topic(self, topic, language="English"):
+        wiki_text, wiki_title = self.search_wikipedia(topic)
         if not wiki_text:
-            # Use Llama 3 directly with chat history
-            messages = [{"role": "system", "content": system_prompt}]
-            messages += self.chat_history
+            return f"Could not find information about {topic}.", "Not found"
+        prompt = f"""Summarize the following in {language}.
+Use clear bullet points and sections. Be concise but cover all key points.
 
-            stream = self.groq.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=messages,
-                temperature=0.2,
-                max_tokens=512,
-                stream=True
-            )
+Text: {wiki_text[:3000]}
 
-            full_answer = ""
-            for chunk in stream:
-                delta = chunk.choices[0].delta.content or ""
-                full_answer += delta
-                yield delta, None, None
+Summary:"""
+        response = self.groq.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            max_tokens=800
+        )
+        return response.choices[0].message.content, wiki_title
 
-            self.chat_history.append({"role": "assistant", "content": full_answer})
-            followups = self.get_followup_questions(query, full_answer)
-            yield "", "Llama 3", followups
-            return
+    def answer_from_context(self, query, context, source_name, language="English"):
+        system_prompt = f"""You are a helpful assistant like ChatGPT.
+Answer questions directly and clearly in {language}.
+Use bullet points when appropriate.
+Base your answer on the provided context.
+Never say 'the context does not mention'."""
 
-        # Step 3: Build dynamic index
-        index, chunks = self.build_dynamic_index(wiki_text)
-
-        if not chunks:
-            yield "I could not find relevant information.", wiki_title, []
-            return
-
-        # Step 4: Retrieve relevant chunks
-        relevant_chunks = self.retrieve(query, index, chunks)
-        context = "\n\n".join(relevant_chunks)
-
-        # Step 5: Build messages with full chat history + context
-        user_message = f"""Use the information below to answer the question.
-Information:
+        user_prompt = f"""Context:
 {context}
 
 Question: {query}"""
 
+        self.chat_history.append({"role": "user", "content": query})
         messages = [{"role": "system", "content": system_prompt}]
-
-        # Add previous chat history (excluding current message)
         if len(self.chat_history) > 1:
             messages += self.chat_history[:-1]
+        messages.append({"role": "user", "content": user_prompt})
 
-        messages.append({"role": "user", "content": user_message})
-
-        # Step 6: Stream response
         stream = self.groq.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=messages,
@@ -166,14 +153,104 @@ Question: {query}"""
         for chunk in stream:
             delta = chunk.choices[0].delta.content or ""
             full_answer += delta
-            yield delta, None, None
+            yield delta
 
-        # Step 7: Save assistant response to history
         self.chat_history.append({"role": "assistant", "content": full_answer})
 
-        # Step 8: Generate follow up questions
+    def answer_image(self, query, image_base64, language="English"):
+        self.chat_history.append({"role": "user", "content": query})
+        response = self.groq.chat.completions.create(
+            model="meta-llama/llama-4-scout-17b-16e-instruct",
+            messages=[{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{image_base64}"
+                        }
+                    },
+                    {
+                        "type": "text",
+                        "text": f"Answer in {language}. {query}"
+                    }
+                ]
+            }],
+            temperature=0.2,
+            max_tokens=512
+        )
+        answer = response.choices[0].message.content
+        self.chat_history.append({"role": "assistant", "content": answer})
+        return answer
+
+    def answer_stream(self, query, language="English"):
+        self.chat_history.append({"role": "user", "content": query})
+
+        system_prompt = f"""You are a helpful friendly assistant like ChatGPT.
+Answer in {language}. Be direct, clear and helpful.
+Use bullet points or numbered lists when appropriate.
+For greetings respond warmly and ask how you can help.
+Never say 'based on general knowledge' or 'the context does not mention'."""
+
+        wiki_text, wiki_title = self.search_wikipedia(query)
+
+        if not wiki_text:
+            messages = [{"role": "system", "content": system_prompt}]
+            messages += self.chat_history
+            stream = self.groq.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=messages,
+                temperature=0.3,
+                max_tokens=512,
+                stream=True
+            )
+            full_answer = ""
+            for chunk in stream:
+                delta = chunk.choices[0].delta.content or ""
+                full_answer += delta
+                yield delta, None, None, None
+            self.chat_history.append({"role": "assistant", "content": full_answer})
+            followups = [] if self.is_greeting(query) else self.get_followup_questions(query, full_answer)
+            confidence = None if self.is_greeting(query) else self.get_confidence(query, full_answer, "")
+            yield "", "Llama 3", followups, confidence
+            return
+
+        index, chunks = self.build_dynamic_index(wiki_text)
+        if not chunks:
+            yield "I could not find relevant information.", wiki_title, [], 0
+            return
+
+        relevant_chunks = self.retrieve(query, index, chunks)
+        context = "\n\n".join(relevant_chunks)
+
+        user_message = f"""Information:
+{context}
+
+Question: {query}"""
+
+        messages = [{"role": "system", "content": system_prompt}]
+        if len(self.chat_history) > 1:
+            messages += self.chat_history[:-1]
+        messages.append({"role": "user", "content": user_message})
+
+        stream = self.groq.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=messages,
+            temperature=0.2,
+            max_tokens=512,
+            stream=True
+        )
+
+        full_answer = ""
+        for chunk in stream:
+            delta = chunk.choices[0].delta.content or ""
+            full_answer += delta
+            yield delta, None, None, None
+
+        self.chat_history.append({"role": "assistant", "content": full_answer})
         followups = self.get_followup_questions(query, full_answer)
-        yield "", f"Wikipedia: {wiki_title}", followups
+        confidence = self.get_confidence(query, full_answer, context)
+        yield "", f"Wikipedia: {wiki_title}", followups, confidence
 
     def clear_history(self):
         self.chat_history = []
