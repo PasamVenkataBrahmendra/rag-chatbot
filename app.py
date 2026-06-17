@@ -105,7 +105,10 @@ with st.sidebar:
          "🖼️ Image Generator",
          "🧮 Math Solver",
          "💻 Code Interpreter",
-         "📝 Summarize Topic"],
+         "📝 Summarize Topic",
+         "📊 Research Assistant",
+         "🗺️ Learning Path",
+         "🎯 Interview Coach"],
         index=0
     )
 
@@ -124,6 +127,9 @@ with st.sidebar:
     st.markdown("✅ Confidence score")
     st.markdown("✅ 11 languages")
     st.markdown("✅ Export chat")
+    st.markdown("✅ Research reports")
+    st.markdown("✅ Learning roadmaps")
+    st.markdown("✅ Interview coach")
     st.markdown("---")
 
     if st.session_state.messages:
@@ -349,6 +355,280 @@ elif "Summarize" in mode:
             )
         else:
             st.warning("Please enter a topic.")
+# ── RESEARCH ASSISTANT MODE ───────────────────────────────────
+elif "Research Assistant" in mode:
+    st.markdown("## 📊 Research Assistant")
+    st.markdown("Generate a full structured research report on any topic.")
+
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        topic_input = st.text_input(
+            "Research topic:",
+            placeholder="e.g. Artificial Intelligence, Climate Change, Quantum Computing..."
+        )
+    with col2:
+        lang = st.selectbox("Language", ["English", "Hindi", "Spanish", "French"], key="res_lang")
+
+    if st.button("📊 Generate Research Report", use_container_width=True):
+        if topic_input.strip():
+            st.markdown(f"## 📄 Research Report: {topic_input}")
+            response_placeholder = st.empty()
+            full_report = ""
+
+            with st.spinner(f"Researching {topic_input}... (this takes 30-60 seconds)"):
+                for delta in bot.research_assistant(topic_input, lang):
+                    full_report += delta
+                    response_placeholder.markdown(full_report + "▌")
+
+            response_placeholder.markdown(full_report)
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.download_button(
+                    "📥 Download as TXT",
+                    data=full_report,
+                    file_name=f"research_{topic_input.replace(' ', '_')}.txt",
+                    mime="text/plain",
+                    use_container_width=True
+                )
+            with col2:
+                st.download_button(
+                    "📥 Download as MD",
+                    data=full_report,
+                    file_name=f"research_{topic_input.replace(' ', '_')}.md",
+                    mime="text/markdown",
+                    use_container_width=True
+                )
+        else:
+            st.warning("Please enter a research topic.")
+
+# ── LEARNING PATH MODE ────────────────────────────────────────
+elif "Learning Path" in mode:
+    st.markdown("## 🗺️ Learning Path Generator")
+    st.markdown("Get a personalised week by week roadmap for any skill.")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        skill_input = st.text_input(
+            "Skill to learn:",
+            placeholder="e.g. Python, Machine Learning, Guitar, Photography..."
+        )
+    with col2:
+        level = st.selectbox(
+            "Your current level:",
+            ["Complete Beginner", "Beginner", "Intermediate", "Advanced"],
+            index=0
+        )
+    with col3:
+        lang = st.selectbox("Language", ["English", "Hindi", "Spanish", "French"], key="lp_lang")
+
+    if st.button("🗺️ Generate Learning Path", use_container_width=True):
+        if skill_input.strip():
+            st.markdown(f"## 🗺️ Learning Roadmap: {skill_input}")
+            response_placeholder = st.empty()
+            full_path = ""
+
+            with st.spinner(f"Creating your personalised learning path for {skill_input}..."):
+                for delta in bot.learning_path_generator(skill_input, level, lang):
+                    full_path += delta
+                    response_placeholder.markdown(full_path + "▌")
+
+            response_placeholder.markdown(full_path)
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.download_button(
+                    "📥 Download Roadmap TXT",
+                    data=full_path,
+                    file_name=f"learning_path_{skill_input.replace(' ', '_')}.txt",
+                    mime="text/plain",
+                    use_container_width=True
+                )
+            with col2:
+                st.download_button(
+                    "📥 Download Roadmap MD",
+                    data=full_path,
+                    file_name=f"learning_path_{skill_input.replace(' ', '_')}.md",
+                    mime="text/markdown",
+                    use_container_width=True
+                )
+        else:
+            st.warning("Please enter a skill.")
+
+# ── INTERVIEW COACH MODE ──────────────────────────────────────
+elif "Interview Coach" in mode:
+    st.markdown("## 🎯 Interview Coach")
+    st.markdown("Practice real interview questions for any job role and get graded.")
+
+    # Session state for interview
+    if "interview_role" not in st.session_state:
+        st.session_state.interview_role = ""
+    if "interview_round" not in st.session_state:
+        st.session_state.interview_round = 0
+    if "interview_question" not in st.session_state:
+        st.session_state.interview_question = ""
+    if "interview_history" not in st.session_state:
+        st.session_state.interview_history = []
+    if "interview_started" not in st.session_state:
+        st.session_state.interview_started = False
+    if "waiting_for_answer" not in st.session_state:
+        st.session_state.waiting_for_answer = False
+
+    # Setup screen
+    if not st.session_state.interview_started:
+        st.markdown("### Setup Your Interview")
+        col1, col2 = st.columns(2)
+        with col1:
+            role_input = st.text_input(
+                "Job role:",
+                placeholder="e.g. Python Developer, Data Scientist, Product Manager..."
+            )
+        with col2:
+            lang = st.selectbox(
+                "Language",
+                ["English", "Hindi", "Spanish", "French"],
+                key="ic_lang"
+            )
+
+        if st.button("🎯 Start Interview", use_container_width=True):
+            if role_input.strip():
+                st.session_state.interview_role = role_input
+                st.session_state.interview_round = 1
+                st.session_state.interview_history = []
+                st.session_state.interview_started = True
+                st.session_state.interview_lang = lang
+
+                with st.spinner("Preparing your first question..."):
+                    question = bot.interview_coach_question(
+                        role_input, 1, lang
+                    )
+                st.session_state.interview_question = question
+                st.session_state.waiting_for_answer = True
+                st.rerun()
+            else:
+                st.warning("Please enter a job role.")
+
+    # Interview in progress
+    else:
+        role = st.session_state.interview_role
+        round_num = st.session_state.interview_round
+        lang = st.session_state.get("interview_lang", "English")
+
+        # Stats bar
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Role", role)
+        with col2:
+            st.metric("Round", f"{round_num}")
+        with col3:
+            st.metric("Questions Done", round_num - 1)
+
+        st.markdown("---")
+
+        # Show interview history
+        for item in st.session_state.interview_history:
+            with st.expander(f"Round {item['round']}: {item['question'][:50]}..."):
+                st.markdown(f"**❓ Question:** {item['question']}")
+                st.markdown(f"**💬 Your Answer:** {item['answer']}")
+                st.markdown("**📊 Feedback:**")
+                st.markdown(item['feedback'])
+
+        # Current question
+        if st.session_state.interview_question:
+            st.markdown(f"### ❓ Question {round_num}:")
+            st.info(st.session_state.interview_question)
+
+            # Answer input
+            answer = st.text_area(
+                "Your Answer:",
+                placeholder="Type your answer here... Take your time and be specific.",
+                height=150,
+                key=f"answer_{round_num}"
+            )
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                if st.button("📊 Submit Answer", use_container_width=True):
+                    if answer.strip():
+                        # Grade the answer
+                        st.markdown("### 📊 Feedback:")
+                        feedback_placeholder = st.empty()
+                        full_feedback = ""
+
+                        for delta in bot.interview_coach_grade(
+                            role,
+                            st.session_state.interview_question,
+                            answer,
+                            lang
+                        ):
+                            full_feedback += delta
+                            feedback_placeholder.markdown(full_feedback + "▌")
+
+                        feedback_placeholder.markdown(full_feedback)
+
+                        # Save to history
+                        st.session_state.interview_history.append({
+                            "round": round_num,
+                            "question": st.session_state.interview_question,
+                            "answer": answer,
+                            "feedback": full_feedback
+                        })
+
+                        # Next question
+                        st.session_state.interview_round += 1
+                        with st.spinner("Preparing next question..."):
+                            next_q = bot.interview_coach_question(
+                                role,
+                                st.session_state.interview_round,
+                                lang
+                            )
+                        st.session_state.interview_question = next_q
+                        st.rerun()
+                    else:
+                        st.warning("Please type your answer before submitting.")
+
+            with col2:
+                if st.button("⏭️ Skip Question", use_container_width=True):
+                    st.session_state.interview_round += 1
+                    with st.spinner("Loading next question..."):
+                        next_q = bot.interview_coach_question(
+                            role,
+                            st.session_state.interview_round,
+                            lang
+                        )
+                    st.session_state.interview_question = next_q
+                    st.rerun()
+
+        st.markdown("---")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🔄 Restart Interview", use_container_width=True):
+                st.session_state.interview_started = False
+                st.session_state.interview_round = 0
+                st.session_state.interview_question = ""
+                st.session_state.interview_history = []
+                bot.clear_history()
+                st.rerun()
+
+        with col2:
+            if st.session_state.interview_history:
+                report = f"Interview Report — {role}\n\n"
+                for item in st.session_state.interview_history:
+                    report += f"Round {item['round']}\n"
+                    report += f"Q: {item['question']}\n"
+                    report += f"A: {item['answer']}\n"
+                    report += f"Feedback:\n{item['feedback']}\n"
+                    report += "\n" + "="*50 + "\n\n"
+
+                st.download_button(
+                    "📥 Download Interview Report",
+                    data=report,
+                    file_name=f"interview_{role.replace(' ', '_')}.txt",
+                    mime="text/plain",
+                    use_container_width=True
+                )
 
 # ── CHAT MODE ─────────────────────────────────────────────────
 else:

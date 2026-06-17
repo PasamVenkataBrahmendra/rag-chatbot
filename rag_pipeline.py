@@ -399,6 +399,180 @@ Question: {query}"""
         followups = self.get_followup_questions(query, full_answer)
         confidence = self.get_confidence(query, full_answer, context)
         yield "", f"Wikipedia: {wiki_title}", followups, confidence
+    def research_assistant(self, topic, language="English"):
+        wiki_text, wiki_title = self.search_wikipedia(topic)
+        wiki_context = wiki_text[:3000] if wiki_text else ""
+
+        system_prompt = f"""You are an expert research assistant.
+Generate a comprehensive, well-structured research report in {language}.
+Always include these sections:
+1. Executive Summary
+2. Background & History
+3. Key Concepts & Definitions
+4. Current State & Recent Developments
+5. Applications & Use Cases
+6. Challenges & Limitations
+7. Future Outlook
+8. Key Takeaways
+9. References & Further Reading
+
+Use markdown formatting with headers, bullet points and bold text.
+Be thorough, accurate and professional like an academic paper."""
+
+        user_prompt = f"""Generate a full research report on: {topic}
+
+Background context:
+{wiki_context}
+
+Create a comprehensive, detailed research report with all sections."""
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
+
+        stream = self.groq.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=messages,
+            temperature=0.3,
+            max_tokens=2048,
+            stream=True
+        )
+
+        full_answer = ""
+        for chunk in stream:
+            delta = chunk.choices[0].delta.content or ""
+            full_answer += delta
+            yield delta
+
+        self.chat_history.append({"role": "user", "content": f"Research report on {topic}"})
+        self.chat_history.append({"role": "assistant", "content": full_answer})
+
+    def learning_path_generator(self, skill, level="Beginner", language="English"):
+        system_prompt = f"""You are an expert learning coach and curriculum designer.
+Create a detailed week by week learning roadmap in {language}.
+The person is at {level} level.
+
+Always structure the roadmap like this:
+- Overview (what they will achieve)
+- Prerequisites (what they need before starting)
+- Week by week plan (at least 8 weeks)
+  For each week include:
+  * Week number and theme
+  * Topics to study
+  * Specific resources (books, websites, courses)
+  * Hands-on projects or exercises
+  * Goals and milestones
+- Final project idea
+- Career opportunities after mastering this skill
+- Tips for success
+
+Use markdown formatting. Be specific with real resources."""
+
+        user_prompt = f"""Create a complete week by week learning roadmap for: {skill}
+Student level: {level}
+Make it detailed, practical and achievable."""
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
+
+        stream = self.groq.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=messages,
+            temperature=0.3,
+            max_tokens=2048,
+            stream=True
+        )
+
+        full_answer = ""
+        for chunk in stream:
+            delta = chunk.choices[0].delta.content or ""
+            full_answer += delta
+            yield delta
+
+        self.chat_history.append({"role": "user", "content": f"Learning path for {skill}"})
+        self.chat_history.append({"role": "assistant", "content": full_answer})
+
+    def interview_coach_question(self, job_role, round_num, language="English"):
+        system_prompt = f"""You are an expert interview coach for {job_role} positions.
+Ask ONE professional interview question at a time in {language}.
+Vary between:
+- Technical questions (specific to the role)
+- Behavioral questions (situation based)
+- Problem solving questions
+- Culture fit questions
+
+For round {round_num}:
+- Rounds 1-2: Easy warmup questions
+- Rounds 3-4: Medium technical questions
+- Rounds 5-6: Hard problem solving questions
+- Round 7+: Advanced scenario questions
+
+Return ONLY the question, nothing else.
+No preamble, no explanation, just the question."""
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Ask interview question #{round_num} for {job_role} role."}
+        ]
+
+        response = self.groq.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=messages,
+            temperature=0.7,
+            max_tokens=150
+        )
+        return response.choices[0].message.content.strip()
+
+    def interview_coach_grade(self, job_role, question, answer, language="English"):
+        system_prompt = f"""You are an expert interview coach for {job_role} positions.
+Grade the candidate's answer in {language}.
+
+Always provide:
+## Score: X/10
+
+## What You Did Well
+- specific positives
+
+## What Could Be Better
+- specific improvements
+
+## Model Answer
+A better version of the answer
+
+## Tips for Next Time
+- actionable advice
+
+Be honest, constructive and specific."""
+
+        user_prompt = f"""Job Role: {job_role}
+Question: {question}
+Candidate Answer: {answer}
+
+Grade this answer."""
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
+
+        stream = self.groq.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=messages,
+            temperature=0.2,
+            max_tokens=800,
+            stream=True
+        )
+
+        full_answer = ""
+        for chunk in stream:
+            delta = chunk.choices[0].delta.content or ""
+            full_answer += delta
+            yield delta
+
+        self.chat_history.append({"role": "assistant", "content": full_answer})
 
     def clear_history(self):
         self.chat_history = []
