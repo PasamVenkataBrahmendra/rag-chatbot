@@ -3,10 +3,10 @@ import faiss
 import numpy as np
 import base64
 import requests
+import os
 from bs4 import BeautifulSoup
 from youtube_transcript_api import YouTubeTranscriptApi
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from sentence_transformers import SentenceTransformer
 import re
 
 def extract_text_from_pdf(pdf_file):
@@ -103,10 +103,8 @@ def retrieve(query, index, chunks, embed_model, top_k=4):
 
 def web_search(query, num_results=5):
     try:
-        import os
         from dotenv import load_dotenv
         load_dotenv()
-
         api_key = os.getenv("SERPER_API_KEY")
         if not api_key:
             print("SERPER_API_KEY not found")
@@ -117,17 +115,11 @@ def web_search(query, num_results=5):
             "X-API-KEY": api_key,
             "Content-Type": "application/json"
         }
-        payload = {
-            "q": query,
-            "num": num_results
-        }
-
+        payload = {"q": query, "num": num_results}
         response = requests.post(url, headers=headers, json=payload, timeout=10)
         data = response.json()
-
         results = []
 
-        # Organic results
         for r in data.get("organic", [])[:num_results]:
             results.append({
                 "title": r.get("title", ""),
@@ -135,7 +127,6 @@ def web_search(query, num_results=5):
                 "url": r.get("link", "")
             })
 
-        # Answer box if available
         if "answerBox" in data:
             box = data["answerBox"]
             results.insert(0, {
@@ -144,7 +135,6 @@ def web_search(query, num_results=5):
                 "url": box.get("link", "")
             })
 
-        # Knowledge graph if available
         if "knowledgeGraph" in data:
             kg = data["knowledgeGraph"]
             results.insert(0, {
