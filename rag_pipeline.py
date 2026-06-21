@@ -763,6 +763,209 @@ Question: {query}"""
             yield "", f"Wikipedia: {wiki_title}", followups, confidence, citations
         except Exception as e:
             yield f"Error: {str(e)}", "Error", [], 0, []
+    def answer_pdf_with_citations(self, query, chunks_with_pages, index, embed_model, language="English"):
+        from media_handler import retrieve_with_pages
+        retrieved = retrieve_with_pages(query, index, chunks_with_pages, embed_model)
+
+        if not retrieved:
+            yield "Could not find relevant content in the PDF."
+            return
+
+        context = "\n\n".join([
+            f"[Page {r['page']}]: {r['text']}"
+            for r in retrieved
+        ])
+
+        system_prompt = f"""You are a helpful document assistant in {language}.
+Answer questions based ONLY on the PDF content provided.
+ALWAYS cite the exact page number like (Page X) after each fact.
+Be direct and specific.
+If information spans multiple pages mention all relevant pages."""
+
+        user_prompt = f"""PDF Content:
+{context}
+
+Question: {query}
+
+Answer with page citations:"""
+
+        self.chat_history.append({"role": "user", "content": query})
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
+
+        try:
+            stream = self.groq_call(messages, temperature=0.2, max_tokens=512, stream=True)
+            full_answer = ""
+            for chunk in stream:
+                delta = chunk.choices[0].delta.content or ""
+                full_answer += delta
+                yield delta
+
+            self.chat_history.append({"role": "assistant", "content": full_answer})
+
+            citations = [
+                {"page": r["page"], "text": r["text"][:150], "score": r["score"]}
+                for r in retrieved
+            ]
+            yield "\n\n__CITATIONS__" + str(citations)
+
+        except Exception as e:
+            yield f"Error: {str(e)}"
+
+    def personal_tutor(self, topic, level="Beginner", language="English"):
+        wiki_text, _, _ = self.search_wikipedia(topic)
+        context = wiki_text[:2000] if wiki_text else ""
+
+        system_prompt = f"""You are an expert personal tutor in {language}.
+Teach the topic step by step for a {level} student.
+
+Always structure your lesson like this:
+
+## Lesson: [Topic]
+
+### What You Will Learn
+[Clear learning objectives]
+
+### Step 1: Introduction
+[Simple explanation with real world analogy]
+
+### Step 2: Core Concept
+[Main concept explained simply with example]
+
+### Step 3: How It Works
+[Detailed explanation with examples]
+
+### Step 4: Practice Example
+[Worked example the student can follow]
+
+### Quick Quiz
+Q1: [Simple question]
+Q2: [Medium question]
+Q3: [Harder question]
+Answers at the bottom
+
+### Key Takeaways
+[3-5 bullet points]
+
+### Next Steps
+[What to learn next]
+
+### Quiz Answers
+[Answers to quiz questions]
+
+Be encouraging friendly and clear."""
+
+        user_prompt = f"""Teach me about: {topic}
+My level: {level}
+Context: {context}"""
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
+
+        try:
+            stream = self.groq_call(messages, temperature=0.3, max_tokens=2048, stream=True)
+            full_answer = ""
+            for chunk in stream:
+                delta = chunk.choices[0].delta.content or ""
+                full_answer += delta
+                yield delta
+
+            self.chat_history.append({"role": "user", "content": f"Teach me {topic}"})
+            self.chat_history.append({"role": "assistant", "content": full_answer})
+
+        except Exception as e:
+            yield f"Error: {str(e)}"
+
+    def tutor_followup(self, question, topic, language="English"):
+        system_prompt = f"""You are a helpful personal tutor teaching {topic} in {language}.
+Answer the student's follow up question clearly.
+Use simple examples and encourage the student.
+If they got a quiz answer wrong explain why kindly."""
+
+        self.chat_history.append({"role": "user", "content": question})
+        messages = [{"role": "system", "content": system_prompt}]
+        messages += self.chat_history
+
+        try:
+            stream = self.groq_call(messages, temperature=0.3, max_tokens=512, stream=True)
+            full_answer = ""
+            for chunk in stream:
+                delta = chunk.choices[0].delta.content or ""
+                full_answer += delta
+                yield delta
+
+            self.chat_history.append({"role": "assistant", "content": full_answer})
+
+        except Exception as e:
+            yield f"Error: {str(e)}"
+
+    def analyze_resume(self, resume_text, job_role="", language="English"):
+        system_prompt = f"""You are an expert career coach and resume analyst in {language}.
+Analyze the resume thoroughly and provide detailed professional feedback.
+
+Always structure your analysis like this:
+
+## Resume Score: X/10
+
+## Strengths
+[What is done well]
+
+## Weaknesses
+[What needs improvement]
+
+## Section by Section Analysis
+
+### Contact Information
+### Summary/Objective
+### Work Experience
+### Education
+### Skills
+### Overall Formatting
+
+## Top 5 Improvements
+1.
+2.
+3.
+4.
+5.
+
+## ATS Score: X/10
+[How well it will pass Applicant Tracking Systems]
+
+## Best Job Roles for This Resume
+[Suggest 3-5 matching roles]
+
+{f"## Fit for {job_role}: X/10" if job_role else ""}
+{f"[How well this resume fits {job_role} and what to add]" if job_role else ""}
+
+Be honest specific and actionable."""
+
+        user_prompt = f"""Analyze this resume:
+
+{resume_text[:4000]}
+
+{f"Target role: {job_role}" if job_role else ""}"""
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
+
+        try:
+            stream = self.groq_call(messages, temperature=0.2, max_tokens=2048, stream=True)
+            full_answer = ""
+            for chunk in stream:
+                delta = chunk.choices[0].delta.content or ""
+                full_answer += delta
+                yield delta
+
+        except Exception as e:
+            yield f"Error: {str(e)}"
+
 
     def clear_history(self):
         self.chat_history = []

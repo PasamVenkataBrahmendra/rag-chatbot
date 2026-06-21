@@ -13,9 +13,10 @@ from media_handler import (
 from database import init_db, create_session, save_message, load_session_messages, get_all_sessions, delete_session, rename_session
 from code_executor import extract_python_code, execute_python_code, is_safe_code
 import datetime
-import pyttsx3
 import threading
-
+from streamlit_mic_recorder import mic_recorder
+from voice_handler import transcribe_audio, text_to_speech_base64, LANG_CODES
+from artifacts import show_artifact_panel, detect_artifact_type
 # Init DB
 init_db()
 
@@ -70,6 +71,16 @@ defaults = {
     "interview_history": [],
     "interview_started": False,
     "interview_lang": "English",
+    "pdf_citation_index": None,
+    "pdf_citation_chunks": [],
+    "pdf_citation_name": "",
+    "tutor_topic": "",
+    "tutor_started": False,
+    "tutor_level": "Beginner",
+    "tutor_lang": "English",
+    "artifacts_enabled": True,
+    "voice_enabled": False,
+    "last_audio_id": None,
     "session_id": None,
     "citations": [],
     "auto_improve": False,
@@ -79,17 +90,19 @@ for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
-def speak_text(text):
-    def run():
-        try:
-            engine = pyttsx3.init()
-            engine.setProperty('rate', 150)
-            engine.say(text[:500])
-            engine.runAndWait()
-        except:
-            pass
-    thread = threading.Thread(target=run, daemon=True)
-    thread.start()
+def speak_text(text, language="English"):
+    try:
+        lang_code = LANG_CODES.get(language, "en")
+        audio_b64, error = text_to_speech_base64(text, lang_code)
+        if audio_b64 and not error:
+            audio_html = f"""
+            <audio autoplay>
+                <source src="data:audio/mp3;base64,{audio_b64}" type="audio/mp3">
+            </audio>
+            """
+            st.markdown(audio_html, unsafe_allow_html=True)
+    except Exception as e:
+        pass
 
 # Sidebar
 with st.sidebar:
@@ -110,7 +123,8 @@ with st.sidebar:
     st.markdown("### ⚙️ Settings")
     st.session_state.auto_improve = st.toggle("✨ Auto Improve Prompts", value=st.session_state.auto_improve)
     st.session_state.tts_enabled = st.toggle("🔊 Text to Speech", value=st.session_state.tts_enabled)
-
+    st.session_state.artifacts_enabled = st.toggle("🎨 Show Artifacts", value=st.session_state.get("artifacts_enabled", True))
+    st.session_state.voice_enabled = st.toggle("🎙️ Voice Input", value=st.session_state.get("voice_enabled", False))
     st.markdown("---")
     st.markdown("### 💾 Chat History")
 
@@ -159,7 +173,10 @@ with st.sidebar:
          "🃏 Flashcards", "📝 Quiz Mode", "🗄️ Text to SQL",
          "📐 Diagram Generator", "📧 Email Writer", "📄 Cover Letter",
          "✅ Grammar Checker", "🎨 Tone Changer", "🧠 Mind Map",
-         "🎯 Action Plan", "⚔️ Debate Mode"],
+         "🎯 Action Plan", "⚔️ Debate Mode",
+         "📄 PDF with Citations",
+         "🎓 Personal Tutor",
+         "📋 Resume Analyzer"],
         index=0
     )
 
@@ -715,7 +732,251 @@ elif "Debate Mode" in mode:
             st.download_button("📥 Download", data=full_debate, file_name=f"debate_{topic.replace(' ','_')}.txt", mime="text/plain")
         else:
             st.warning("Please enter a topic.")
+# ── PDF WITH CITATIONS MODE ───────────────────────────────────
+elif "PDF with Citations" in mode:
+    st.markdown("## 📄 PDF Q&A with Page Citations")
+    st.markdown("Upload a PDF and get answers with exact page numbers.")
 
+    from media_handler import extract_pdf_with_pages, build_index_with_pages
+
+    uploaded = st.file_uploader("Upload PDF", type=["pdf"], key="citation_pdf")
+
+    if uploaded:
+        if uploaded.name != st.session_state.pdf_citation_name:
+            with st.spinner("Reading PDF with page tracking..."):
+                pages = extract_pdf_with_pages(uploaded)
+                index, chunks = build_index_with_pages(pages, bot.embed_model)
+            st.session_state.pdf_citation_index = index
+            st.session_state.pdf_citation_chunks = chunks
+            st.session_state.pdf_citation_name = uploaded.name
+            st.success(f"✅ {uploaded.name} loaded! ({len(pages)} pages, {len(chunks)} chunks)")
+
+    if st.session_state.pdf_citation_index is not None:
+        st.markdown(f"**Chatting with:** {st.session_state.pdf_citation_name}")
+
+        for msg in st.session_state.messages:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+                if msg.get("page_citations"):
+                    with st.expander("📖 Page Citations"):
+                        for c in msg["page_citations"]:
+                            st.markdown(f'<div class="citation-box"><b>Page {c["page"]}</b> — Relevance: {c["score"]}%<br><i>{c["text"]}...</i></div>', unsafe_allow_html=True)
+
+        prompt = st.chat_input("Ask anything about the PDF...")
+        if prompt:
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            save_to_db("user", prompt)
+
+            with st.chat_message("user"):
+                st.markdown(prompt)
+
+            with st.chat_message("assistant"):
+                response_placeholder = st.empty()
+                full_response = ""
+                page_citations = []
+
+                for delta in bot.answer_pdf_with_citations(
+                    prompt,
+                    st.session_state.pdf_citation_chunks,
+                    st.session_state.pdf_citation_index,
+                    bot.embed_model,
+                    st.session_state.language
+                ):
+                    if "__CITATIONS__" in delta:
+                        import ast
+                        try:
+                            citations_str = delta.split("__CITATIONS__")[1]
+                            page_citations = ast.literal_eval(citations_str)
+                        except:
+                            pass
+                    else:
+                        full_response += delta
+                        response_placeholder.markdown(full_response + "▌")
+
+                response_placeholder.markdown(full_response)
+
+                if page_citations:
+                    with st.expander("📖 Page Citations"):
+                        for c in page_citations:
+                            st.markdown(f'<div class="citation-box"><b>Page {c["page"]}</b> — Relevance: {c["score"]}%<br><i>{c["text"]}...</i></div>', unsafe_allow_html=True)
+
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": full_response,
+                "page_citations": page_citations
+            })
+            save_to_db("assistant", full_response, {"page_citations": page_citations})
+            if st.session_state.tts_enabled:
+                speak_text(full_response)
+            st.rerun()
+    else:
+        st.info("👆 Please upload a PDF to start chatting with page citations.")
+
+# ── PERSONAL TUTOR MODE ───────────────────────────────────────
+elif "Personal Tutor" in mode:
+    st.markdown("## 🎓 Personal Tutor")
+    st.markdown("Learn anything step by step with examples and quizzes.")
+
+    if not st.session_state.tutor_started:
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            topic_input = st.text_input(
+                "What do you want to learn?",
+                placeholder="e.g. Python, Photosynthesis, World War 2..."
+            )
+        with col2:
+            level = st.selectbox(
+                "Your level:",
+                ["Complete Beginner", "Beginner", "Intermediate", "Advanced"]
+            )
+        with col3:
+            lang = st.selectbox(
+                "Language:",
+                ["English", "Hindi", "Spanish", "French"],
+                key="tutor_lang_select"
+            )
+
+        if st.button("🎓 Start Lesson", use_container_width=True):
+            if topic_input.strip():
+                st.session_state.tutor_topic = topic_input
+                st.session_state.tutor_level = level
+                st.session_state.tutor_lang = lang
+                st.session_state.tutor_started = True
+                st.session_state.messages = []
+                bot.clear_history()
+
+                with st.chat_message("assistant"):
+                    response_placeholder = st.empty()
+                    full_lesson = ""
+                    with st.spinner(f"Preparing your lesson on {topic_input}..."):
+                        for delta in bot.personal_tutor(topic_input, level, lang):
+                            full_lesson += delta
+                            response_placeholder.markdown(full_lesson + "▌")
+                    response_placeholder.markdown(full_lesson)
+
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": full_lesson
+                })
+                save_to_db("assistant", full_lesson)
+                if st.session_state.tts_enabled:
+                    speak_text(full_lesson[:500])
+
+                st.download_button(
+                    "📥 Download Lesson",
+                    data=full_lesson,
+                    file_name=f"lesson_{topic_input.replace(' ','_')}.txt",
+                    mime="text/plain"
+                )
+                st.rerun()
+            else:
+                st.warning("Please enter a topic.")
+
+    else:
+        topic = st.session_state.tutor_topic
+        level = st.session_state.tutor_level
+        lang = st.session_state.get("tutor_lang", "English")
+
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.markdown(f"**Learning:** {topic} | **Level:** {level}")
+        with col2:
+            if st.button("🔄 New Topic", use_container_width=True):
+                st.session_state.tutor_started = False
+                st.session_state.tutor_topic = ""
+                st.session_state.messages = []
+                bot.clear_history()
+                st.rerun()
+
+        for msg in st.session_state.messages:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+
+        prompt = st.chat_input("Ask a follow up question or check your quiz answer...")
+        if prompt:
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            save_to_db("user", prompt)
+
+            with st.chat_message("user"):
+                st.markdown(prompt)
+
+            with st.chat_message("assistant"):
+                response_placeholder = st.empty()
+                full_response = ""
+                for delta in bot.tutor_followup(prompt, topic, lang):
+                    full_response += delta
+                    response_placeholder.markdown(full_response + "▌")
+                response_placeholder.markdown(full_response)
+
+            st.session_state.messages.append({"role": "assistant", "content": full_response})
+            save_to_db("assistant", full_response)
+            if st.session_state.tts_enabled:
+                speak_text(full_response)
+            st.rerun()
+
+# ── RESUME ANALYZER MODE ──────────────────────────────────────
+elif "Resume Analyzer" in mode:
+    st.markdown("## 📋 Resume Analyzer")
+    st.markdown("Upload your resume PDF and get detailed professional feedback.")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        resume_file = st.file_uploader(
+            "Upload Resume PDF",
+            type=["pdf"],
+            key="resume_pdf"
+        )
+    with col2:
+        job_role = st.text_input(
+            "Target job role (optional):",
+            placeholder="e.g. Python Developer, Data Scientist..."
+        )
+
+    lang = st.selectbox(
+        "Language:",
+        ["English", "Hindi", "Spanish", "French"],
+        key="resume_lang"
+    )
+
+    if resume_file and st.button("📋 Analyze Resume", use_container_width=True):
+        with st.spinner("Reading resume..."):
+            resume_file.seek(0)
+            resume_text = extract_text_from_pdf(resume_file)
+
+        if not resume_text.strip():
+            st.error("Could not extract text. Make sure it is not a scanned image PDF.")
+        else:
+            st.markdown("### 📊 Resume Analysis")
+            response_placeholder = st.empty()
+            full_analysis = ""
+
+            with st.spinner("Analyzing your resume... (30-60 seconds)"):
+                for delta in bot.analyze_resume(resume_text, job_role, lang):
+                    full_analysis += delta
+                    response_placeholder.markdown(full_analysis + "▌")
+
+            response_placeholder.markdown(full_analysis)
+
+            if st.session_state.tts_enabled:
+                speak_text(full_analysis[:500])
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.download_button(
+                    "📥 Download TXT",
+                    data=full_analysis,
+                    file_name="resume_analysis.txt",
+                    mime="text/plain",
+                    use_container_width=True
+                )
+            with col2:
+                st.download_button(
+                    "📥 Download MD",
+                    data=full_analysis,
+                    file_name="resume_analysis.md",
+                    mime="text/markdown",
+                    use_container_width=True
+                )
 # ── CHAT MODE ─────────────────────────────────────────────────
 else:
     st.markdown("## 💬 RAG Chatbot")
@@ -868,6 +1129,7 @@ Source: <a href="{c['url']}" target="_blank">{c['source']}</a>
             st.markdown('</div>', unsafe_allow_html=True)
 
     prefill = st.session_state.pop("prefill_question", None)
+    voice_prompt = None
 
     col_plus, col_input = st.columns([1, 11])
     with col_plus:
@@ -875,7 +1137,30 @@ Source: <a href="{c['url']}" target="_blank">{c['source']}</a>
             st.session_state.show_upload = not st.session_state.show_upload
             st.rerun()
 
-    prompt = st.chat_input("Message RAG Chatbot...") or prefill
+    # Voice Input
+    if st.session_state.get("voice_enabled", False):
+        st.markdown("🎙️ **Voice Input** — Click Start, speak, then click Stop")
+        audio = mic_recorder(
+            start_prompt="⏺️ Start Recording",
+            stop_prompt="⏹️ Stop Recording",
+            just_once=True,
+            use_container_width=True,
+            key="mic_input"
+        )
+
+        if audio and audio.get("id") != st.session_state.get("last_audio_id"):
+            st.session_state.last_audio_id = audio["id"]
+            audio_bytes = audio["bytes"]
+            if len(audio_bytes) > 1000:
+                with st.spinner("Transcribing your voice..."):
+                    transcribed, error = transcribe_audio(audio_bytes)
+                if transcribed:
+                    st.success(f"🎙️ You said: **{transcribed}**")
+                    voice_prompt = transcribed
+                elif error:
+                    st.error(f"Transcription failed: {error}")
+
+    prompt = st.chat_input("Message RAG Chatbot...") or prefill or voice_prompt
 
     if prompt:
         # Auto improve prompt if enabled
@@ -945,7 +1230,13 @@ Source: <a href="{c['url']}" target="_blank">{c['source']}</a>
                 response_placeholder.markdown(full_response)
 
         if st.session_state.tts_enabled:
-            speak_text(full_response)
+            speak_text(full_response, st.session_state.language)
+
+        # Show artifact if content looks like code or document
+        if st.session_state.get("artifacts_enabled", True):
+            artifact_type, lang = detect_artifact_type(full_response)
+            if artifact_type in ["code", "html", "table"]:
+                show_artifact_panel(full_response, title="Generated Content")
 
         st.session_state.messages.append({"role": "assistant", "content": full_response})
         save_to_db("assistant", full_response)

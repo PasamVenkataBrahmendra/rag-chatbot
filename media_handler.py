@@ -149,3 +149,49 @@ def web_search(query, num_results=5):
     except Exception as e:
         print(f"Web search error: {e}")
         return []
+def extract_pdf_with_pages(pdf_file):
+    pages = []
+    pdf_bytes = pdf_file.read()
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    for page_num, page in enumerate(doc, start=1):
+        text = page.get_text()
+        if text.strip():
+            pages.append({
+                "page": page_num,
+                "text": text
+            })
+    doc.close()
+    return pages
+
+def build_index_with_pages(pages, embed_model):
+    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+    all_chunks = []
+    for page_data in pages:
+        chunks = splitter.split_text(page_data["text"])
+        for chunk in chunks:
+            all_chunks.append({
+                "text": chunk,
+                "page": page_data["page"]
+            })
+    if not all_chunks:
+        return None, []
+    texts = [c["text"] for c in all_chunks]
+    embeddings = embed_model.encode(texts, show_progress_bar=False)
+    dimension = embeddings.shape[1]
+    index = faiss.IndexFlatL2(dimension)
+    index.add(np.array(embeddings))
+    return index, all_chunks
+
+def retrieve_with_pages(query, index, chunks, embed_model, top_k=4):
+    query_embedding = embed_model.encode([query])
+    distances, indices = index.search(np.array(query_embedding), top_k)
+    results = []
+    for dist, idx in zip(distances[0], indices[0]):
+        if idx < len(chunks):
+            item = chunks[idx]
+            results.append({
+                "text": item["text"] if isinstance(item, dict) else item,
+                "page": item.get("page", "?") if isinstance(item, dict) else "?",
+                "score": max(0, 100 - int(dist * 10))
+            })
+    return results
