@@ -20,21 +20,56 @@
 
   --primary: #6366f1;
   --secondary: #06b6d4;
-  --accent: #8b5cf6;
-  --gold: #f59e0b;
 
   --text: #f0f0ff;
   --text2: #8888aa;
 
-  --glass: rgba(255, 255, 255, 0.03);
+  --border: rgba(99,102,241,.2);
 
-  --border: rgba(99, 102, 241, 0.2);
+  --glass: rgba(255,255,255,.03);
 
-  --glow: 0 0 30px rgba(99, 102, 241, 0.3);
-
-  --radius: 20px;
+  --card: rgba(255,255,255,.04);
 }
 
+[data-theme="light"] {
+
+  --bg: #f8fafc;
+
+  --bg2: #ffffff;
+
+  --text: #111827;
+
+  --text2: #475569;
+
+  --border: rgba(99,102,241,.15);
+
+  --glass: rgba(255,255,255,.85);
+
+  --card: rgba(255,255,255,.95);
+
+}
+
+body{
+  background:var(--bg);
+  color:var(--text);
+
+  transition:
+  background .3s,
+  color .3s;
+}
+
+.glass{
+  background:var(--glass);
+
+  -webkit-backdrop-filter:
+  blur(20px);
+
+  backdrop-filter:
+  blur(20px);
+
+  border:
+  1px solid var(--border);
+}
 /* =========================
    GLOBAL
 ========================= */
