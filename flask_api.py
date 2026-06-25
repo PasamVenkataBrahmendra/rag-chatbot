@@ -1,4 +1,9 @@
 import os
+from deep_translator import GoogleTranslator
+from youtube_transcript_api import YouTubeTranscriptApi
+from gtts import gTTS
+from flask import request, jsonify
+import base64
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["OMP_NUM_THREADS"] = "1"
 
@@ -23,6 +28,43 @@ bot = RAGChatbot()
 print("5")
 
 print("Flask API Ready!")
+
+@app.route("/api/youtube-translate", methods=["POST"])
+def youtube_translate():
+
+    try:
+        video_id = request.form.get("video_id")
+        language = request.form.get("language")
+
+        if not video_id:
+            return jsonify({
+                "error": "video_id missing"
+            }), 400
+
+        transcript = YouTubeTranscriptApi.get_transcript(
+            video_id
+        )
+
+        full_text = " ".join(
+            [x["text"] for x in transcript]
+        )
+
+        translator = Translator()
+
+        translated = translator.translate(
+            full_text,
+            dest=language.lower()
+        )
+
+        return jsonify({
+            "success": True,
+            "translation": translated.text
+        })
+
+    except Exception as e:
+        return jsonify({
+            "error": str(e)
+        }), 500
 
 @app.route("/")
 def root():

@@ -4,13 +4,22 @@ import ThemeToggle from "./ThemeToggle";
 
 export default function Navbar() {
   const [scrolled, setScrolled] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
   const location = useLocation();
 
   useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 50);
-    window.addEventListener("scroll", onScroll);
-    return () => window.removeEventListener("scroll", onScroll);
+    const onScroll = () =>
+      setScrolled(window.scrollY > 50);
+
+    window.addEventListener(
+      "scroll",
+      onScroll
+    );
+
+    return () =>
+      window.removeEventListener(
+        "scroll",
+        onScroll
+      );
   }, []);
 
   const links = [
@@ -23,61 +32,190 @@ export default function Navbar() {
   ];
 
   return (
-    <nav style={{
-      position: "fixed",
-      top: 0, left: 0, right: 0,
-      zIndex: 1000,
-      padding: "16px 24px",
-      background: scrolled ? "rgba(0,0,15,0.9)" : "transparent",
-      backdropFilter: scrolled ? "blur(20px)" : "none",
-      borderBottom: scrolled ? "1px solid rgba(99,102,241,0.2)" : "none",
-      transition: "all 0.3s",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "space-between"
-    }}>
+    <nav
+      style={{
+        position: "fixed",
+        top: 0,
+        left: 0,
+        right: 0,
+
+        zIndex: 1000,
+
+        padding: "14px 26px",
+
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+
+        background: scrolled
+          ? "rgba(5,5,20,.88)"
+          : "rgba(5,5,20,.35)",
+
+        backdropFilter:
+          "blur(18px)",
+
+        borderBottom:
+          "1px solid rgba(99,102,241,.12)"
+      }}
+    >
       {/* Logo */}
-      <Link to="/" style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: "10px" }}>
-        <div style={{
-          width: "40px", height: "40px",
-          borderRadius: "12px",
-          background: "linear-gradient(135deg, #6366f1, #06b6d4)",
-          display: "flex", alignItems: "center",
-          justifyContent: "center", fontSize: "20px",
-          animation: "pulse-glow 2s ease infinite"
-        }}>🤖</div>
-        <span style={{
-          fontFamily: "Orbitron, sans-serif",
-          fontWeight: "700",
-          fontSize: "20px",
-          background: "linear-gradient(135deg, #6366f1, #06b6d4)",
-          WebkitBackgroundClip: "text",
-          WebkitTextFillColor: "transparent"
-        }}>PVBotX</span>
+
+      <Link
+        to="/"
+        style={{
+          textDecoration: "none",
+          display: "flex",
+          alignItems: "center",
+          gap: "10px",
+          flexShrink: 0
+        }}
+      >
+        <div
+          style={{
+            width: 44,
+            height: 44,
+
+            borderRadius: 14,
+
+            background:
+              "linear-gradient(135deg,#6366f1,#06b6d4)",
+
+            display: "flex",
+
+            alignItems: "center",
+
+            justifyContent: "center",
+
+            fontSize: 22
+          }}
+        >
+          🤖
+        </div>
+
+        <span
+          style={{
+            fontSize: 22,
+
+            fontWeight: 700,
+
+            fontFamily:
+              "Orbitron",
+
+            background:
+              "linear-gradient(135deg,#6366f1,#06b6d4)",
+
+            WebkitBackgroundClip:
+              "text",
+
+            WebkitTextFillColor:
+              "transparent"
+          }}
+        >
+          PVBotX
+        </span>
       </Link>
 
-      {/* Desktop Links */}
-      <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-        {links.map(l => (
+      {/* CENTER LINKS */}
+
+      <div
+        style={{
+          display: "flex",
+
+          gap: "6px",
+
+          alignItems: "center",
+
+          flexWrap: "wrap",
+
+          justifyContent:
+            "center",
+
+          margin:
+            "0 30px",
+
+          flex: 1
+        }}
+      >
+        {links.map(link => (
           <Link
-            key={l.to}
-            to={l.to}
+            key={link.to}
+            to={link.to}
             style={{
-              textDecoration: "none",
-              color: location.pathname === l.to ? "#6366f1" : "rgba(255,255,255,0.7)",
-              fontSize: "14px",
-              fontWeight: "500",
-              padding: "6px 14px",
-              borderRadius: "20px",
-              background: location.pathname === l.to ? "rgba(99,102,241,0.1)" : "transparent",
-              transition: "all 0.2s"
+              textDecoration:
+                "none",
+
+              color:
+                location.pathname ===
+                link.to
+                  ? "#6366f1"
+                  : "rgba(255,255,255,.75)",
+
+              padding:
+                "8px 14px",
+
+              borderRadius:
+                "999px",
+
+              whiteSpace:
+                "nowrap",
+
+              fontSize:
+                "14px",
+
+              background:
+                location.pathname ===
+                link.to
+                  ? "rgba(99,102,241,.12)"
+                  : "transparent"
             }}
           >
-            {l.label}
+            {link.label}
           </Link>
         ))}
-        <Link to="/chat">
-          <button className="btn-primary" style={{ padding: "8px 20px", fontSize: "13px", marginLeft: "8px" }}>
+      </div>
+
+      {/* RIGHT */}
+
+      <div
+        style={{
+          display: "flex",
+
+          alignItems:
+            "center",
+
+          gap: "12px",
+
+          flexShrink: 0
+        }}
+      >
+        <ThemeToggle />
+
+        <Link
+          to="/chat"
+        >
+          <button
+            style={{
+              border: "none",
+
+              padding:
+                "12px 22px",
+
+              borderRadius:
+                "999px",
+
+              color:
+                "#fff",
+
+              fontWeight:
+                "700",
+
+              cursor:
+                "pointer",
+
+              background:
+                "linear-gradient(135deg,#6366f1,#06b6d4)"
+            }}
+          >
             Launch App 🚀
           </button>
         </Link>
